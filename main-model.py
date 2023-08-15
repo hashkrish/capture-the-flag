@@ -1,6 +1,7 @@
 import random
 import numpy as np
 import gym
+from multiprocessing import Process, Manager
 
 
 # Create a custom gym environment
@@ -60,32 +61,63 @@ class QLearningAgent:
         ] + alpha * (reward + gamma * max_next_q)
 
 
-# Training loop
-env = CaptureTheFlagEnv()
-agent = QLearningAgent(env.action_space, env.observation_space)
-num_episodes = 1000
-alpha = 0.1
-gamma = 0.99
+def train_worker(agent, env, episode_range, alpha, gamma, result_list):
+    for episode in episode_range:
+        state = env.reset()
+        done = False
+        total_reward = 0
 
-for episode in range(num_episodes):
-    print(f"Episode {episode+1}/{num_episodes}")
-    state = env.reset()
-    done = False
-    total_reward = 0
+        while not done:
+            actions = [agent.choose_action(s) for s in state]
+            next_state, rewards, done, _ = env.step(actions)
+            total_reward += sum(rewards)
 
-    while not done:
-        actions = [agent.choose_action(s) for s in state]
-        next_state, rewards, done, _ = env.step(actions)
-        total_reward += sum(rewards)
+            for i, reward in enumerate(rewards):
+                agent.update_q_table(
+                    state[i], actions[i], reward, next_state[i], alpha, gamma
+                )
 
-        for i, reward in enumerate(rewards):
-            agent.update_q_table(
-                state[i], actions[i], reward, next_state[i], alpha, gamma
+            state = next_state
+
+        result_list[episode] = total_reward
+
+
+if __name__ == "__main__":
+    env = CaptureTheFlagEnv()
+    agent = QLearningAgent(env.action_space, env.observation_space)
+    num_episodes = 1000
+    alpha = 0.1
+    gamma = 0.99
+
+    num_processes = 4  # Number of parallel processes
+    episodes_per_process = num_episodes // num_processes
+
+    with Manager() as manager:
+        result_list = manager.list([0] * num_episodes)
+        processes = []
+
+        for i in range(num_processes):
+            start_episode = i * episodes_per_process
+            end_episode = start_episode + episodes_per_process
+            process = Process(
+                target=train_worker,
+                args=(
+                    agent,
+                    env,
+                    range(start_episode, end_episode),
+                    alpha,
+                    gamma,
+                    result_list,
+                ),
             )
+            processes.append(process)
+            process.start()
 
-        state = next_state
+        for process in processes:
+            process.join()
 
-    print(f"Episode {episode+1}, Total Reward: {total_reward}")
-print("Training complete!")
+        # Display results
+        total_rewards = list(result_list)
+        print("Total rewards per episode:", total_rewards)
 
-# Now you can use the trained Q-learning agent to play the game
+    print("Training complete!")
